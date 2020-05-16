@@ -12,29 +12,30 @@ const {MessageParser, CommandType} = require('./lib/message-parser');
 
 /**
  * Represents a Tuya device.
- *
- * You *must* pass either an IP or an ID. If
- * you're experiencing problems when only passing
- * one, try passing both if possible.
- * @class
- * @param {Object} options
- * @param {String} [options.ip] IP of device
- * @param {Number} [options.port=6668] port of device
- * @param {String} [options.id] ID of device (also called `devId`)
- * @param {String} [options.gwID=''] gateway ID (not needed for most devices),
- * if omitted assumed to be the same as `options.id`
- * @param {String} options.key encryption key of device (also called `localKey`)
- * @param {String} [options.productKey] product key of device (currently unused)
- * @param {Number} [options.version=3.1] protocol version
- * @example
- * const tuya = new TuyaDevice({id: 'xxxxxxxxxxxxxxxxxxxx',
- *                              key: 'xxxxxxxxxxxxxxxx'})
  */
 class TuyaDevice extends EventEmitter {
+  /**
+   * Represents a Tuya device.
+   *
+   * You *must* pass either an IP or an ID. If
+   * you're experiencing problems when only passing
+   * one, try passing both if possible.
+   *
+   * @param {Object} options
+   * @param {String=} [options.ip] IP of device
+   * @param {Number} [options.port=6668] port of device
+   * @param {String=} [options.id] ID of device (also called `devId`)
+   * @param {String=} [options.gwID=''] gateway ID (not needed for most devices),
+   * if omitted assumed to be the same as `options.id`
+   * @param {String=} options.key encryption key of device (also called `localKey`)
+   * @param {String=} [options.productKey] product key of device (currently unused)
+   * @param {Number} [options.version=3.1] protocol version
+   * @example
+   * const tuya = new TuyaDevice({id: 'xxxxxxxxxxxxxxxxxxxx',
+   *                              key: 'xxxxxxxxxxxxxxxx'})
+   */
   constructor({ip, port = 6668, id, gwID = id, key, productKey, version = 3.1} = {}) {
     super();
-    // Set device to user-passed options
-    this.device = {ip, port, id, gwID, key, productKey, version};
 
     // Check arguments
     if (!(isValidString(id) ||
@@ -43,16 +44,20 @@ class TuyaDevice extends EventEmitter {
     }
 
     // Check key
-    if (!isValidString(this.device.key) || this.device.key.length !== 16) {
+    if (!isValidString(key) || key.length !== 16) {
       throw new TypeError('Key is missing or incorrect.');
     }
 
-    // Handles encoding/decoding, encrypting/decrypting messages
-    this.device.parser = new MessageParser({
-      key: this.device.key,
-      version: this.device.version});
+    // Set device to user-passed options
+    this.device = {ip, port, id, gwID, key, productKey, version,
+
+      // Handles encoding/decoding, encrypting/decrypting messages
+                   parser: new MessageParser({
+                     key,
+                     version})};
 
     // Contains array of found devices when calling .find()
+    /** @type {{ id: string; ip: string; }[]} */
     this.foundDevices = [];
 
     // Private instance variables
@@ -68,6 +73,14 @@ class TuyaDevice extends EventEmitter {
     this._resolvers = {};
 
     this._waitingForSetToResolve = false;
+
+    // Help typescript know that pingpongTimeout and _sendTimeout exist,
+    // even though they are not being set to anything yet
+    this.pingpongTimeout = null;
+    /** @type {NodeJS.Timeout|undefined}
+     * this is never assign in the project - maybe a bug?
+     */
+    this._sendTimeout = undefined;
   }
 
   /**
@@ -136,6 +149,8 @@ class TuyaDevice extends EventEmitter {
    * @param {Boolean} [options.multiple=false]
    * Whether or not multiple properties should be set with options.data
    * @param {Object} [options.data={}] Multiple properties to set at once. See above.
+   * @param {string=} [options.devId]
+   * An optional device id to override the device id set in the constructor
    * @example
    * // set default property
    * tuya.set({set: true}).then(() => console.log('device was turned on'))
@@ -181,7 +196,7 @@ class TuyaDevice extends EventEmitter {
     }
 
     // Get time
-    const timeStamp = parseInt(new Date() / 1000, 10);
+    const timeStamp = Math.floor(Number(new Date()) / 1000);
 
     // Construct payload
     const payload = {
@@ -223,7 +238,7 @@ class TuyaDevice extends EventEmitter {
    * wraps the entire operation in a retry.
    * @private
    * @param {Buffer} buffer buffer of data
-   * @returns {Promise<Any>} returned data for request
+   * @returns {Promise<any>} returned data for request
    */
   _send(buffer) {
     // Make sure we're connected
@@ -236,9 +251,11 @@ class TuyaDevice extends EventEmitter {
       return new Promise((resolve, reject) => {
         try {
           // Send data
+          // @ts-ignore the try catch will handle this if client is undefined
           this.client.write(buffer);
 
           // Add resolver function
+          // @ts-ignore
           this._resolvers[this._currentSequenceN] = data => resolve(data);
         } catch (error) {
           reject(error);
@@ -262,6 +279,7 @@ class TuyaDevice extends EventEmitter {
     });
 
     // Send ping
+    // @ts-ignore
     await this.client.write(buffer);
   }
 
@@ -281,6 +299,7 @@ class TuyaDevice extends EventEmitter {
 
         // Attempt to connect
         debug(`Connecting to ${this.device.ip}...`);
+        // @ts-ignore
         this.client.connect(this.device.port, this.device.ip);
 
         // Default connect timeout is ~1 minute,
@@ -295,6 +314,7 @@ class TuyaDevice extends EventEmitter {
            * @property {Error} error error event
            */
           // this.emit('error', new Error('connection timed out'));
+          // @ts-ignore
           this.client.destroy();
           reject(new Error('connection timed out'));
         });
@@ -329,6 +349,7 @@ class TuyaDevice extends EventEmitter {
 
           this.emit('error', new Error('Error from socket'));
 
+          // @ts-ignore
           this.client.destroy();
         });
 
@@ -347,6 +368,7 @@ class TuyaDevice extends EventEmitter {
            * @event TuyaDevice#disconnected
            */
           this.emit('disconnected');
+          // @ts-ignore
           this.client.destroy();
 
           if (this.pingpongTimeout) {
@@ -361,6 +383,7 @@ class TuyaDevice extends EventEmitter {
           this._connected = true;
 
           // Remove connect timeout
+          // @ts-ignore
           this.client.setTimeout(0);
 
           /**
@@ -392,9 +415,17 @@ class TuyaDevice extends EventEmitter {
     return Promise.resolve(true);
   }
 
+  /** Handle incoming packets
+   * @param {import("./lib/message-parser").Packet} packet
+   */
   _packetHandler(packet) {
     // Response was received, so stop waiting
-    clearTimeout(this._sendTimeout);
+    if (this._sendTimeout) {
+      // Ensures that _sendTimeout is never undefined,
+      // because nodejs does not allow undefined parameters
+      // here
+      clearTimeout(this._sendTimeout);
+    }
 
     if (packet.commandByte === CommandType.HEART_BEAT) {
       debug(`Pong from ${this.device.ip}`);
@@ -436,9 +467,11 @@ class TuyaDevice extends EventEmitter {
 
     // Call data resolver for sequence number
     if (packet.sequenceN in this._resolvers) {
+      // @ts-ignore
       this._resolvers[packet.sequenceN](packet.payload);
 
       // Remove resolver
+      // @ts-ignore
       delete this._resolvers[packet.sequenceN];
     }
   }
@@ -453,10 +486,21 @@ class TuyaDevice extends EventEmitter {
     this._connected = false;
 
     // Clear timeouts
-    clearTimeout(this._sendTimeout);
+    if (this._sendTimeout) {
+    // Ensures that _sendTimeout is never undefined,
+    // because nodejs does not allow undefined parameters
+    // here
+      clearTimeout(this._sendTimeout);
+    }
+
     clearTimeout(this._connectTimeout);
     clearTimeout(this._responseTimeout);
-    clearTimeout(this.pingpongTimeout);
+    if (this.pingpongTimeout) {
+    // Ensure that pingpongTimeout is never undefined,
+    // because nodejs does not allow undefined parameters
+    // here
+      clearTimeout(this.pingpongTimeout);
+    }
 
     if (!this.client) {
       return;
@@ -476,6 +520,15 @@ class TuyaDevice extends EventEmitter {
 
   /**
    * @deprecated since v3.0.0. Will be removed in v4.0.0. Use find() instead.
+   * @param {Object} [options]
+   * @param {Boolean} [options.all]
+   * true to return array of all found devices
+   * @param {Number} [options.timeout=10]
+   * how long, in seconds, to wait for device
+   * to be resolved before timeout error is thrown
+   * @example
+   * tuya.find().then(() => console.log('ready!'))
+   * @returns {ReturnType<boolean|Array.<{ id: string; ip: string; }>>}
    */
   resolveId(options) {
     // eslint-disable-next-line max-len
@@ -495,9 +548,10 @@ class TuyaDevice extends EventEmitter {
    * to be resolved before timeout error is thrown
    * @example
    * tuya.find().then(() => console.log('ready!'))
-   * @returns {Promise<Boolean|Array>}
+   * @returns {Promise<Boolean|Array.<{ id: string; ip: string; }>>}
    * true if ID/IP was found and device is ready to be used
    */
+  // @ts-ignore
   find({timeout = 10, all = false} = {}) {
     if (isValidString(this.device.id) &&
         isValidString(this.device.ip)) {
@@ -513,21 +567,33 @@ class TuyaDevice extends EventEmitter {
     const listenerEncrypted = dgram.createSocket({type: 'udp4', reuseAddr: true});
     listenerEncrypted.bind(6667);
 
+    /**
+     * @param {{ (value?: boolean | undefined): void; }} resolve
+     * @param {{ (reason?: any): void; }} reject
+     * @returns { (message: Buffer) => void }
+     */
     const broadcastHandler = (resolve, reject) => message => {
       debug('Received UDP message.');
 
+      /** @type {import('./lib/message-parser').Packet} */
       let dataRes;
       try {
         dataRes = this.device.parser.parse(message)[0];
       } catch (error) {
         debug(error);
         reject(error);
+
+        // If packet parsing failed, then we have to bail out -
+        // there's nothing more we can do here
+        return;
       }
 
       debug('UDP data:');
       debug(dataRes);
 
+      // @ts-ignore
       const thisID = dataRes.payload.gwId;
+      // @ts-ignore
       const thisIP = dataRes.payload.ip;
 
       // Add to array if it doesn't exist
@@ -539,17 +605,23 @@ class TuyaDevice extends EventEmitter {
           (this.device.id === thisID || this.device.ip === thisIP) &&
           dataRes.payload) {
         // Add IP
+        // @ts-ignore
         this.device.ip = dataRes.payload.ip;
 
         // Add ID and gwID
+        // @ts-ignore
         this.device.id = dataRes.payload.gwId;
+        // @ts-ignore
         this.device.gwID = dataRes.payload.gwId;
 
-        // Change product key if neccessary
+        // Change product key if necessary
+        // @ts-ignore
         this.device.productKey = dataRes.payload.productKey;
 
         // Change protocol version if necessary
+        // @ts-ignore
         if (this.device.version !== dataRes.payload.version) {
+          // @ts-ignore
           this.device.version = dataRes.payload.version;
 
           // Update the parser
@@ -602,19 +674,22 @@ class TuyaDevice extends EventEmitter {
 
   /**
    * Toggles a boolean property.
-   * @param {Number} [property=1] property to toggle
+   * @param {Number|String} [property='1'] property to toggle
    * @returns {Promise<Boolean>} the resulting state
    */
   async toggle(property = '1') {
     property = property.toString();
 
     // Get status
+    // @ts-ignore
     const status = await this.get({dps: property});
 
     // Set to opposite
+    // @ts-ignore
     await this.set({set: !status, dps: property});
 
     // Return new status
+    // @ts-ignore
     return this.get({dps: property});
   }
 }
